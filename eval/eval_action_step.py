@@ -60,7 +60,7 @@ def get_cast_dtype(precision: str):
         cast_dtype = torch.float16
     return cast_dtype
 
-def eval_16_action_step_calvin_ddp(args, action_step, dataset_path,eval_log_dir="", debug=False, diverse_inst=False, sequence_i=-1):
+def eval_16_action_step_calvin_ddp(args, action_step, dataset_path, eval_log_dir="", debug=False, diverse_inst=False, sequence_i=-1):
     env = make_env(dataset_path)
     cast_dtype = get_cast_dtype(args.precision)
     hist_len = None
@@ -135,6 +135,175 @@ def eval_16_action_step_calvin_ddp(args, action_step, dataset_path,eval_log_dir=
     return False
 
 
+def save_array_as_png(array, file_name):
+    """
+    将一个形状为 (height, width, 3) 的 numpy 数组保存为 PNG 文件。
+    
+    :param array: numpy.ndarray, 必须是 shape == (height, width, 3) 且数据类型为 uint8
+    :param file_name: str, 保存的 PNG 文件名，包括路径
+    """
+    if array.dtype != np.uint8:
+        array = (array * 255).astype(np.uint8)  # Scale if needed (assuming input is normalized)
+    
+    # Convert the array to a PIL image
+    image = Image.fromarray(array)
+    
+    # Save the image as a PNG file
+    image.save(file_name)
+
+import cv2
+def observation2frame(obs, output_resolution=256, griper_view=True):
+    # if not griper_view:
+    #     pass
+    # elif 'rgb_static' in obs and 'rgb_gripper' in obs:
+    rgb_static = copy.deepcopy(obs['rgb_obs']['rgb_static'])
+    rgb_gripeer = copy.deepcopy(obs['rgb_obs']['rgb_gripper'])
+
+    resized_static = cv2.resize(rgb_static, (output_resolution, output_resolution))
+    resized_gripeer = cv2.resize(rgb_gripeer, (output_resolution, output_resolution))
+    # Concatenate images along width (axis=1) or height (axis=0)
+    # import pdb; pdb.set_trace()
+    concatenated_frame = np.concatenate((resized_static, resized_gripeer), axis=1)
+    rgb_frame = cv2.cvtColor(concatenated_frame, cv2.COLOR_BGR2RGB)
+    return concatenated_frame
+
+
+def get_first_frame(args, action_step, dataset_path, initial_state, eval_sequence, eval_log_dir="", debug=False, diverse_inst=False, sequence_i=-1):
+    env = make_env(dataset_path)
+    cast_dtype = get_cast_dtype(args.precision)
+    hist_len = None
+    if args.head_type=="diffusion":
+        hist_len = args.n_obs_steps
+    elif args.pad_length != -1:
+        hist_len = args.pad_length
+    conf_dir = Path(args.calvin_conf_path)
+    task_cfg = OmegaConf.load(conf_dir / "callbacks/rollout/tasks/new_playtable_tasks.yaml")
+    task_oracle = hydra.utils.instantiate(task_cfg)
+    
+    if diverse_inst:
+        with open('./lang_annotation_cache.json', 'r') as f:
+            val_annotations = json.load(f)
+    else:
+        val_annotations = OmegaConf.load(conf_dir / "annotations/new_playtable_validation.yaml")
+        
+    eval_log_dir = get_log_dir(eval_log_dir)
+    # with open('./eval_sequences.json', 'r') as f:
+    #     eval_sequences = json.load(f)
+    debug = True
+    planned_actions = []
+    if debug:
+        img_queue = []
+    # for initial_state, eval_sequence in eval_sequences:
+    start_info = env.get_info()
+    robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
+    env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
+    obs = env.get_obs()
+    concatenated_frame = observation2frame(obs)
+    # import pdb; pdb.set_trace()
+    img_copy = copy.deepcopy(obs['rgb_obs']['rgb_static'])
+    # save_array_as_png(img_copy, 'test.png')
+    # return img_copy
+    print(f"concatenated_frame : {concatenated_frame.shape}")
+    return concatenated_frame, img_copy
+    
+    
+    # import pdb; pdb.set_trace()
+        # for i in range(action_step.shape[0]):
+        #     # print(action_step.shape)
+        #     action = action_step[i, ...]
+        #     # print(action.shape)
+        #     action = torch.concat((action[:-1], action[-1:] > 0.5), dim=0)
+        #     action[-1] = (action[-1] - 0.5) * 2 
+        #     action = action.cpu().detach().to(dtype=torch.float16).numpy()
+        #     obs, _, _, current_info = env.step(action)
+        #     if debug:
+        #         img_copy = copy.deepcopy(obs['rgb_obs']['rgb_static'])
+        #         img_queue.append(img_copy)
+        #     current_task_info = task_oracle.get_task_info_for_set(start_info, current_info, {subtask})
+        #     if len(current_task_info) > 0:
+        #         if debug:
+        #             print(colored("success", "green"), end=" ")
+        #             img_clip = ImageSequenceClip(img_queue, fps=30)
+        #             img_clip.write_gif(os.path.join(eval_log_dir, f'{sequence_i}-{subtask_i}-{subtask}-succ.gif'), fps=30)
+        #         return True
+        # break
+        # break
+        
+def eval_init_state_action_step_calvin_ddp(args, action_step, dataset_path, initial_state, eval_sequence, eval_log_dir="", debug=False, diverse_inst=False, sequence_i=-1):
+    env = make_env(dataset_path)
+    cast_dtype = get_cast_dtype(args.precision)
+    hist_len = None
+    if args.head_type=="diffusion":
+        hist_len = args.n_obs_steps
+    elif args.pad_length != -1:
+        hist_len = args.pad_length
+    conf_dir = Path(args.calvin_conf_path)
+    task_cfg = OmegaConf.load(conf_dir / "callbacks/rollout/tasks/new_playtable_tasks.yaml")
+    task_oracle = hydra.utils.instantiate(task_cfg)
+    
+    if diverse_inst:
+        with open('./lang_annotation_cache.json', 'r') as f:
+            val_annotations = json.load(f)
+    else:
+        val_annotations = OmegaConf.load(conf_dir / "annotations/new_playtable_validation.yaml")
+        
+    eval_log_dir = get_log_dir(eval_log_dir)
+    # with open('./eval_sequences.json', 'r') as f:
+    #     eval_sequences = json.load(f)
+        
+        
+    dist.init_process_group(backend='nccl', init_method='env://')
+    device_num = int(torch.distributed.get_world_size())
+    device_id = torch.distributed.get_rank()
+    assert NUM_SEQUENCES % device_num == 0
+    interval_len = int(NUM_SEQUENCES // device_num)
+    # eval_sequences = eval_sequences[device_id*interval_len:min((device_id+1)*interval_len, NUM_SEQUENCES)]
+    results = []
+    plans = defaultdict(list)
+    local_sequence_i = 0
+    base_sequence_i = device_id * interval_len
+
+    # if not debug:
+    #     eval_sequences = tqdm(eval_sequences, position=0, leave=True)
+        
+    debug = True
+    planned_actions = []
+    if debug:
+        img_queue = []
+        
+    # for initial_state, eval_sequence in eval_sequences:
+    start_info = env.get_info()
+    for subtask_i, subtask in enumerate(eval_sequence):
+        robot_obs, scene_obs = get_env_state_for_initial_condition(initial_state)
+        env.reset(robot_obs=robot_obs, scene_obs=scene_obs)
+        for i in range(action_step.shape[0]):
+            # print(action_step.shape)
+            action = action_step[i, ...]
+            # print(action.shape)
+            action = torch.concat((action[:-1], action[-1:] > 0.5), dim=0)
+            action[-1] = (action[-1] - 0.5) * 2 
+            action = action.cpu().detach().to(dtype=torch.float16).numpy()
+            obs, _, _, current_info = env.step(action)
+            if debug:
+                img_copy = copy.deepcopy(obs['rgb_obs']['rgb_static'])
+                img_queue.append(img_copy)
+            current_task_info = task_oracle.get_task_info_for_set(start_info, current_info, {subtask})
+            if len(current_task_info) > 0:
+                if debug:
+                    print(colored("success", "green"), end=" ")
+                    img_clip = ImageSequenceClip(img_queue, fps=30)
+                    img_clip.write_gif(os.path.join(eval_log_dir, f'{sequence_i}-{subtask_i}-{subtask}-succ.gif'), fps=30)
+                return True
+        break
+        # break
+    
+    if debug:
+        print(colored("fail", "red"), end=" ")
+        img_clip = ImageSequenceClip(img_queue, fps=30)
+        img_clip.write_gif(os.path.join(eval_log_dir, f'{sequence_i}-{subtask_i}-{subtask}-fail.gif'), fps=30)
+    return False
+
+        
 def get_config():
     parser = argparse.ArgumentParser()
     parser.add_argument("--vision_encoder_path", default="ViT-L-14", type=str)
@@ -414,16 +583,38 @@ def main(action_step=None):
     
     args = get_config()
     
+    with open('./eval_sequences.json', 'r') as f:
+        eval_sequences = json.load(f)
+    initial_state, eval_sequence = eval_sequences[0][0], eval_sequences[0][1]
+    
+    print(f"our task is {eval_sequence[0]}")
+    
+    concatenated_frame, img_picture = get_first_frame(  
+        args=args,
+        action_step=action_step,
+        dataset_path=args.calvin_dataset, 
+        initial_state=initial_state, 
+        eval_sequence=eval_sequence
+    )
     
     if action_step is None:
         action_step = torch.rand(16, 7)
-
+        
+    # eval_16_action_step_calvin_ddp(
+    #     args=args,
+    #     action_step=action_step,
+    #     dataset_path=args.calvin_dataset,
+    # )
     
-    eval_16_action_step_calvin_ddp(
+    eval_init_state_action_step_calvin_ddp(
         args=args,
         action_step=action_step,
-        dataset_path=args.calvin_dataset,
+        dataset_path=args.calvin_dataset, 
+        initial_state=initial_state, 
+        eval_sequence=eval_sequence
     )
+    
+
 
 
 if __name__ == '__main__':
